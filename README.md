@@ -13,6 +13,9 @@ Plumb is a self-hosted relay for local development. You run your own instance. I
    go install github.com/rejisterjack/plumb@latest
    ```
 
+   Prebuilt binaries for Linux, macOS, and Windows (amd64 and arm64) are on the
+   [releases page](https://github.com/rejisterjack/plumb/releases/latest).
+
 3. Open a tunnel to your local server:
 
    ```sh
