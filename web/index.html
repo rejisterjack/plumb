@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plumb — a stable webhook URL for local development</title>
+    <meta
+      name="description"
+      content="One deploy. A stable public URL. Stripe, GitHub, and Twilio webhooks forwarded to localhost — including after the CLI reconnects."
+    />
+    <meta property="og:title" content="Plumb — a stable webhook URL for local development" />
+    <meta
+      property="og:description"
+      content="Self-hosted webhook relay for local development. Deploy once, connect from anywhere, replay what you missed."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://plumb.rejisterjack.com" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Plumb home">
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="2" y="3" width="7" height="18" rx="3.5" />
+          <rect x="15" y="3" width="7" height="18" rx="3.5" />
+          <path d="M9.5 12h5" />
+          <path d="M12.7 9.7l2.3 2.3-2.3 2.3" />
+        </svg>
+        <span>plumb</span>
+      </a>
+      <nav class="site-nav">
+        <a href="#how">How it works</a>
+        <a href="#install">Install</a>
+        <a href="#deploy">Deploy</a>
+        <a class="nav-cta" href="https://github.com/rejisterjack/plumb">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="hero-eyebrow">Self-hosted webhook relay for local development</p>
+        <h1>One deploy. A stable public URL for every webhook.</h1>
+        <p class="hero-sub">
+          Plumb forwards Stripe, GitHub, and Twilio webhooks to localhost over a WebSocket tunnel.
+          The URL stays the same across restarts and reconnects — so you stop re-pasting endpoint
+          URLs into provider dashboards.
+        </p>
+        <div class="hero-cta">
+          <a class="button primary" href="https://github.com/rejisterjack/plumb/releases/latest">
+            Download v0.1.0
+          </a>
+          <a class="button ghost" href="#install">Install with go</a>
+        </div>
+        <figure class="terminal" aria-label="Terminal session showing plumb connect output">
+          <div class="terminal-bar">
+            <span></span><span></span><span></span>
+            <code class="terminal-title">terminal</code>
+          </div>
+          <pre><code><span class="prompt">$</span> plumb connect --relay https://relay.example --port 3000
+<span class="out">public: https://relay.example/h/9f2c7ab34e1d90b6/
+local:  http://127.0.0.1:3000</span>
+
+<span class="out">POST /webhooks/stripe -> 200 (3ms)
+Stripe-Signature: t=1761820200,v1=8f…a2
+{"id": "evt_1Q…", "type": "payment_intent.succeeded"}</span>
+<span class="out">----</span>
+
+<span class="dim"># local server down? the relay buffers it</span>
+<span class="out">POST /webhooks/stripe -> 200 <span class="pill">X-Plumb-Buffered: 1</span></span>
+<span class="dim"># back up? replay without re-firing the provider</span>
+<span class="prompt">$</span> plumb replay --last 5
+<span class="out">replayed 3</span></code></pre>
+        </figure>
+        <ul class="hero-facts">
+          <li>Single Go binary — relay and CLI</li>
+          <li>No database, no accounts</li>
+          <li>MIT, self-hosted</li>
+        </ul>
+      </section>
+
+      <section id="how" class="section">
+        <h2>How it works</h2>
+        <ol class="steps">
+          <li>
+            <span class="step-num" aria-hidden="true">1</span>
+            <h3>Deploy the relay once</h3>
+            <p>
+              One small always-on service gets a persistent public URL. It stores recent webhook
+              bodies in memory and nothing else.
+            </p>
+          </li>
+          <li>
+            <span class="step-num" aria-hidden="true">2</span>
+            <h3>Connect from your machine</h3>
+            <p>
+              <code>plumb connect</code> opens an authenticated WebSocket tunnel and forwards each
+              webhook to a local port — raw body and signature headers intact, so verification still
+              passes.
+            </p>
+          </li>
+          <li>
+            <span class="step-num" aria-hidden="true">3</span>
+            <h3>Point providers at it</h3>
+            <p>
+              Copy the printed public URL into Stripe, GitHub, or Twilio once. Reconnects reuse the
+              same path, so the URL never changes.
+            </p>
+          </li>
+          <li>
+            <span class="step-num" aria-hidden="true">4</span>
+            <h3>Replay what you missed</h3>
+            <p>
+              Webhooks that arrive while you are rebuilding are buffered. <code>plumb replay</code>
+              re-POSTs them to localhost only — it never calls the provider again.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <section id="install" class="section split">
+        <div>
+          <h2>Install the CLI</h2>
+          <p>
+            One static binary for Linux, macOS, and Windows — amd64 and arm64. No runtime
+            dependencies.
+          </p>
+          <p>
+            Grab an archive from the
+            <a href="https://github.com/rejisterjack/plumb/releases/latest">latest release</a>, or
+            build it yourself:
+          </p>
+        </div>
+        <pre class="code-block"><code>go install github.com/rejisterjack/plumb@latest</code></pre>
+      </section>
+
+      <section id="deploy" class="section split">
+        <div>
+          <h2>Deploy the relay</h2>
+          <p>
+            The repo ships a Dockerfile and a Railway config. Generate a token, set it on the
+            service, and the public URL stays until you delete the service.
+          </p>
+          <p class="fine">
+            Runs anywhere a container runs — you only need <code>PORT</code> and
+            <code>PLUMB_TOKEN</code>.
+          </p>
+        </div>
+        <pre class="code-block"><code>git clone https://github.com/rejisterjack/plumb
+cd plumb
+openssl rand -hex 32   <span class="dim"># set as PLUMB_TOKEN</span>
+railway up</code></pre>
+      </section>
+
+      <section class="section">
+        <h2>Built for local development</h2>
+        <ul class="feature-list">
+          <li>Stable URL — silent reconnects reuse the same path and token</li>
+          <li>Per-developer paths on one shared relay, isolated from each other</li>
+          <li>Replay buffer for missed events; live pull even when the CLI is down</li>
+          <li>Terminal log of every request with headers and body</li>
+          <li>Token-gated tunnels; constant-time comparison</li>
+          <li>Unguessable per-path URLs act as the capability for inbound webhooks</li>
+        </ul>
+        <div class="limits">
+          <h3>What it is not</h3>
+          <p>
+            Not a shared service, not a multi-tenant SaaS, and not a production webhook endpoint.
+            Each team runs its own relay; the replay buffer lives in memory and clears on restart.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>
+        Plumb · MIT license ·
+        <a href="https://github.com/rejisterjack/plumb">github.com/rejisterjack/plumb</a>
+      </p>
+    </footer>
+  </body>
+</html>
