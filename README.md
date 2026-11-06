@@ -49,13 +49,27 @@ Railway variables:
 | `PLUMB_FORWARD_TIMEOUT` | How long to wait for localhost. Default `15s`. |
 | `PORT` | Set by Railway. The process listens on `:$PORT`. |
 
+### Railway notes
+
 From a checked-out repo, with the [Railway CLI](https://docs.railway.com/guides/cli) logged in:
 
 ```sh
+# one-time: create/link a project, then set the token before the first boot
+railway link
+railway variables set PLUMB_TOKEN="$(openssl rand -hex 32)"
 railway up
 ```
 
-The repo includes a `Dockerfile` and `railway.toml`. The container runs `/plumb relay` and Railway checks `GET /healthz`. You can also deploy the Dockerfile on any host that sets `PORT` and `PLUMB_TOKEN`.
+The repo includes a `Dockerfile` and `railway.toml` (`/plumb relay`, health check `GET /healthz`, restart on failure). Railway injects `PORT`; do not hard-code a listen port. After deploy, copy the public HTTPS URL from the Railway service networking panel into `plumb connect --relay …`.
+
+Useful checks:
+
+```sh
+curl -fsS https://your-relay.example/healthz   # expect: ok
+railway logs                                   # method/path/status only; bodies stay out of logs
+```
+
+Restarting or redeploying clears the in-memory replay buffer. That is expected. You can also deploy the Dockerfile on any host that sets `PORT` and `PLUMB_TOKEN`.
 
 Do not set `--dev` on a public host. That flag disables tunnel authentication and is only for localhost.
 
@@ -120,7 +134,7 @@ A live tunnel keeps its connection. Replay uses a separate short-lived socket. I
 
 ## Stripe demo checklist
 
-Use this once after a deploy. It is a manual check, not part of CI.
+Use this once after a deploy. It is a **manual** checklist, not CI automation. Keep it that way: Stripe Dashboard endpoints, signature verification, and local servers vary per project, so a green pipeline would not prove your webhook path. Run the boxes below when you first deploy or change the relay URL.
 
 - [ ] Relay is up. `curl https://your-relay.example/healthz` returns `ok`.
 - [ ] `PLUMB_TOKEN` is set on the relay and in your shell.
@@ -138,6 +152,8 @@ Use this once after a deploy. It is a manual check, not part of CI.
 - Replay history does not survive a relay restart.
 - There is no request rewriting, custom domain automation, or production webhook delivery.
 - Hosting cost is whatever your relay platform charges for one small always-on service.
+
+**Won't-build (closed):** A durable disk-backed buffer across restarts is intentionally out of scope. The in-memory ring is enough for local webhook recovery; restart clears it by design.
 
 ## Development
 
