@@ -138,18 +138,19 @@ Stripe-Signature: t=1761820200,v1=8f…a2
         <div>
           <h2>Deploy the relay</h2>
           <p>
-            The repo ships a Dockerfile and a Railway config. Generate a token, set it on the
-            service, and the public URL stays until you delete the service.
+            The repo ships a Dockerfile (and a Railway config). Generate a token, set it on a
+            small container host such as Render, and the public URL stays until you delete the
+            service.
           </p>
           <p class="fine">
             Runs anywhere a container runs — you only need <code>PORT</code> and
-            <code>PLUMB_TOKEN</code>.
+            <code>PLUMB_TOKEN</code>. Free hosts may sleep when idle.
           </p>
         </div>
         <pre class="code-block"><code>git clone https://github.com/rejisterjack/plumb
 cd plumb
 openssl rand -hex 32   <span class="dim"># set as PLUMB_TOKEN</span>
-railway up</code></pre>
+<span class="dim"># deploy the Dockerfile (Render, Railway, or any container host)</span></code></pre>
       </section>
 
       <section class="section">

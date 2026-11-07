@@ -8,7 +8,7 @@ Plumb is a self-hosted relay for local development. You run your own instance. I
 
 ## Quickstart
 
-1. Deploy the relay (Railway is the documented path below) and set `PLUMB_TOKEN`.
+1. Deploy the relay (Render is the documented path below; Railway works when that account can provision a project) and set `PLUMB_TOKEN`.
 2. Install the CLI:
 
    ```sh
@@ -31,7 +31,7 @@ Plumb is a self-hosted relay for local development. You run your own instance. I
 
 ## Deploy the relay
 
-The relay is one container. It stores recent webhook bodies in memory and does not use a database. One small always-on service is enough for a solo developer; a Railway hobby or trial plan covers that. The public URL stays until you delete the service. Restarting the process clears the replay buffer.
+The relay is one container. It stores recent webhook bodies in memory and does not use a database. The public URL stays until you delete the service. Restarting the process clears the replay buffer.
 
 Generate a token and set it on the service before the first boot:
 
@@ -39,23 +39,40 @@ Generate a token and set it on the service before the first boot:
 openssl rand -hex 32
 ```
 
-Railway variables:
-
 | Variable | Purpose |
 | --- | --- |
 | `PLUMB_TOKEN` | Required. Shared secret for `plumb connect`. |
 | `PLUMB_BUFFER` | Webhooks kept per path. Default 50. |
 | `PLUMB_MAX_BODY` | Maximum body size in bytes. Default 2 MiB. |
 | `PLUMB_FORWARD_TIMEOUT` | How long to wait for localhost. Default `15s`. |
-| `PORT` | Set by Railway. The process listens on `:$PORT`. |
+| `PORT` | Injected by the host. The process listens on `:$PORT`. |
 
-From a checked-out repo, with the [Railway CLI](https://docs.railway.com/guides/cli) logged in:
+### Render
+
+Create a free Docker web service from this repo. Point it at the root [`Dockerfile`](Dockerfile), set `PLUMB_TOKEN`, and use health check path `/healthz`. The process listens on `PORT`. Copy the public HTTPS URL into `plumb connect --relay …`.
+
+A free Render service sleeps after about 15 minutes without traffic. The hostname stays; the first request after sleep can take about a minute. Prefer an always-on plan if providers send webhooks while you are idle.
+
+### Railway
+
+The repo includes [`railway.toml`](railway.toml) (`/plumb relay`, health check `GET /healthz`, restart on failure) for accounts that can provision a Railway project:
 
 ```sh
+# one-time: create/link a project, then set the token before the first boot
+railway link
+railway variables set PLUMB_TOKEN="$(openssl rand -hex 32)"
 railway up
 ```
 
-The repo includes a `Dockerfile` and `railway.toml`. The container runs `/plumb relay` and Railway checks `GET /healthz`. You can also deploy the Dockerfile on any host that sets `PORT` and `PLUMB_TOKEN`.
+Railway injects `PORT`; do not hard-code a listen port.
+
+Useful checks:
+
+```sh
+curl -fsS https://your-relay.example/healthz   # expect: ok
+```
+
+Restarting or redeploying clears the in-memory replay buffer. That is expected. You can also deploy the Dockerfile on any host that sets `PORT` and `PLUMB_TOKEN`.
 
 Do not set `--dev` on a public host. That flag disables tunnel authentication and is only for localhost.
 
@@ -120,7 +137,7 @@ A live tunnel keeps its connection. Replay uses a separate short-lived socket. I
 
 ## Stripe demo checklist
 
-Use this once after a deploy. It is a manual check, not part of CI.
+Use this once after a deploy. It is a **manual** checklist, not CI automation. Keep it that way: Stripe Dashboard endpoints, signature verification, and local servers vary per project, so a green pipeline would not prove your webhook path. Run the boxes below when you first deploy or change the relay URL.
 
 - [ ] Relay is up. `curl https://your-relay.example/healthz` returns `ok`.
 - [ ] `PLUMB_TOKEN` is set on the relay and in your shell.
@@ -138,6 +155,8 @@ Use this once after a deploy. It is a manual check, not part of CI.
 - Replay history does not survive a relay restart.
 - There is no request rewriting, custom domain automation, or production webhook delivery.
 - Hosting cost is whatever your relay platform charges for one small always-on service.
+
+**Won't-build (closed):** A durable disk-backed buffer across restarts is intentionally out of scope. The in-memory ring is enough for local webhook recovery; restart clears it by design.
 
 ## Development
 
