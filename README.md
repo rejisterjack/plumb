@@ -8,7 +8,7 @@ Plumb is a self-hosted relay for local development. You run your own instance. I
 
 ## Quickstart
 
-1. Deploy the relay (Railway is the documented path below) and set `PLUMB_TOKEN`.
+1. Deploy the relay (Render is the documented path below; Railway works when that account can provision a project) and set `PLUMB_TOKEN`.
 2. Install the CLI:
 
    ```sh
@@ -31,7 +31,7 @@ Plumb is a self-hosted relay for local development. You run your own instance. I
 
 ## Deploy the relay
 
-The relay is one container. It stores recent webhook bodies in memory and does not use a database. One small always-on service is enough for a solo developer; a Railway hobby or trial plan covers that. The public URL stays until you delete the service. Restarting the process clears the replay buffer.
+The relay is one container. It stores recent webhook bodies in memory and does not use a database. The public URL stays until you delete the service. Restarting the process clears the replay buffer.
 
 Generate a token and set it on the service before the first boot:
 
@@ -39,19 +39,23 @@ Generate a token and set it on the service before the first boot:
 openssl rand -hex 32
 ```
 
-Railway variables:
-
 | Variable | Purpose |
 | --- | --- |
 | `PLUMB_TOKEN` | Required. Shared secret for `plumb connect`. |
 | `PLUMB_BUFFER` | Webhooks kept per path. Default 50. |
 | `PLUMB_MAX_BODY` | Maximum body size in bytes. Default 2 MiB. |
 | `PLUMB_FORWARD_TIMEOUT` | How long to wait for localhost. Default `15s`. |
-| `PORT` | Set by Railway. The process listens on `:$PORT`. |
+| `PORT` | Injected by the host. The process listens on `:$PORT`. |
 
-### Railway notes
+### Render
 
-From a checked-out repo, with the [Railway CLI](https://docs.railway.com/guides/cli) logged in:
+Create a free Docker web service from this repo. Point it at the root [`Dockerfile`](Dockerfile), set `PLUMB_TOKEN`, and use health check path `/healthz`. The process listens on `PORT`. Copy the public HTTPS URL into `plumb connect --relay …`.
+
+A free Render service sleeps after about 15 minutes without traffic. The hostname stays; the first request after sleep can take about a minute. Prefer an always-on plan if providers send webhooks while you are idle.
+
+### Railway
+
+The repo includes [`railway.toml`](railway.toml) (`/plumb relay`, health check `GET /healthz`, restart on failure) for accounts that can provision a Railway project:
 
 ```sh
 # one-time: create/link a project, then set the token before the first boot
@@ -60,13 +64,12 @@ railway variables set PLUMB_TOKEN="$(openssl rand -hex 32)"
 railway up
 ```
 
-The repo includes a `Dockerfile` and `railway.toml` (`/plumb relay`, health check `GET /healthz`, restart on failure). Railway injects `PORT`; do not hard-code a listen port. After deploy, copy the public HTTPS URL from the Railway service networking panel into `plumb connect --relay …`.
+Railway injects `PORT`; do not hard-code a listen port.
 
 Useful checks:
 
 ```sh
 curl -fsS https://your-relay.example/healthz   # expect: ok
-railway logs                                   # method/path/status only; bodies stay out of logs
 ```
 
 Restarting or redeploying clears the in-memory replay buffer. That is expected. You can also deploy the Dockerfile on any host that sets `PORT` and `PLUMB_TOKEN`.

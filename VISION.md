@@ -28,7 +28,7 @@ ngrok’s free tier assigns a new URL on every restart. Each restart means updat
 
 ## How you use it
 
-1. Deploy the Plumb relay (see README; Railway is the documented path)
+1. Deploy the Plumb relay (see README; Render or Railway)
 2. Install the CLI: `go install github.com/rejisterjack/plumb@latest`
 3. Run `plumb connect --relay https://your-relay.example --port 3000`
 4. Point third-party webhooks at the relay’s public URL
@@ -36,7 +36,7 @@ ngrok’s free tier assigns a new URL on every restart. Each restart means updat
 
 ## How it runs
 
-- **Relay:** single Go binary with a public URL (typically Railway)
+- **Relay:** single Go binary with a public URL (typically Render or Railway)
 - **CLI:** Go binary maintaining a WebSocket tunnel to the relay
 - Webhooks hit the relay and are forwarded over the tunnel to localhost
 - Each team or developer runs their own relay; Plumb is not a shared multi-tenant SaaS
@@ -68,5 +68,6 @@ ngrok’s free tier assigns a new URL on every restart. Each restart means updat
 
 | Component | Platform |
 |-----------|----------|
-| Relay server | Railway (or self-host the binary) |
+| Marketing site | Vercel (`web/`) |
+| Relay server | Render, Railway, or self-host the Docker image / binary |
 | CLI | GitHub releases, `go install` |
