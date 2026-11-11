@@ -5,8 +5,11 @@ import (
 	"time"
 )
 
+const maxVisitors = 10000
+
 // limiter is a per-key token bucket. It exists to blunt accidental floods,
-// not to be a precise quota system.
+// not to be a precise quota system. The visitor map is capped so a flood of
+// distinct keys cannot grow it without bound.
 type limiter struct {
 	mu       sync.Mutex
 	rate     float64
@@ -37,11 +40,17 @@ func (l *limiter) Allow(key string) bool {
 	now := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if len(l.visitors) > 10000 {
+	if len(l.visitors) > maxVisitors {
 		for k, v := range l.visitors {
 			if now.Sub(v.updated) > 10*time.Minute {
 				delete(l.visitors, k)
 			}
+		}
+		for k := range l.visitors {
+			if len(l.visitors) <= maxVisitors {
+				break
+			}
+			delete(l.visitors, k)
 		}
 	}
 	v := l.visitors[key]

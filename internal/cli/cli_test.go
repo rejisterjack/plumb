@@ -1,9 +1,14 @@
 package cli
 
 import (
+	"io"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/rejisterjack/plumb/internal/relay"
 )
 
 func TestLoadFileConfig(t *testing.T) {
@@ -111,4 +116,76 @@ func TestMainUsage(t *testing.T) {
 	if Main([]string{"nope"}) != 2 {
 		t.Fatal("unknown")
 	}
+}
+
+func TestVersionOutput(t *testing.T) {
+	code, out, errOut := captureOutput(t, func() int {
+		return Main([]string{"version"})
+	})
+	if code != 0 {
+		t.Fatalf("exit %d stderr %s", code, errOut)
+	}
+	if out != "plumb "+version+"\n" {
+		t.Fatalf("version output = %q", out)
+	}
+	if errOut != "" {
+		t.Fatalf("stderr = %q", errOut)
+	}
+}
+
+func TestReplayRejectsBadToken(t *testing.T) {
+	const relayToken = "expected-secret"
+	const given = "wrong-token"
+	srv := relay.New(relay.Config{Token: relayToken}, nil)
+	t.Cleanup(srv.Close)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	code, out, errOut := captureOutput(t, func() int {
+		return Main([]string{
+			"replay",
+			"--last", "1",
+			"--relay", ts.URL,
+			"--path", "qabadtoken",
+			"--port", "9",
+			"--token", given,
+		})
+	})
+	combined := out + errOut
+	if code != 1 {
+		t.Fatalf("exit %d output %s", code, combined)
+	}
+	if !strings.Contains(errOut, "unauthorized") {
+		t.Fatalf("stderr = %q", errOut)
+	}
+	if strings.Contains(combined, relayToken) || strings.Contains(combined, given) {
+		t.Fatalf("token leaked: %s", combined)
+	}
+}
+
+func captureOutput(t *testing.T, fn func() int) (int, string, string) {
+	t.Helper()
+	origOut, origErr := os.Stdout, os.Stderr
+	rOut, wOut, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rErr, wErr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout, os.Stderr = wOut, wErr
+	code := fn()
+	_ = wOut.Close()
+	_ = wErr.Close()
+	os.Stdout, os.Stderr = origOut, origErr
+	out, err := io.ReadAll(rOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errOut, err := io.ReadAll(rErr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return code, string(out), string(errOut)
 }

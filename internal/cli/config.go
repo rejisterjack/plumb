@@ -17,10 +17,11 @@ type fileConfig struct {
 }
 
 type connectOpts struct {
-	Relay string
-	Path  string
-	Port  int
-	Token string
+	Relay   string
+	Path    string
+	Port    int
+	Token   string
+	MaxBody int
 }
 
 type replayOpts struct {
@@ -35,7 +36,13 @@ type relayOpts struct {
 	Buffer         int
 	MaxBody        int
 	ForwardTimeout time.Duration
+	MaxPaths       int
+	PathTTL        time.Duration
 }
+
+// version is overwritten by release builds:
+// -X github.com/rejisterjack/plumb/internal/cli.version=v0.1.0
+var version = "dev"
 
 func loadDefaultConfig() (fileConfig, error) {
 	return loadFileConfig(".plumb.toml")

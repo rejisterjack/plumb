@@ -25,6 +25,9 @@ func Main(args []string) int {
 	case "help", "-h", "--help":
 		usage(os.Stdout)
 		return 0
+	case "version", "-v", "--version":
+		fmt.Fprintf(os.Stdout, "plumb %s\n", version)
+		return 0
 	case "relay":
 		return runRelay(args[1:])
 	case "connect":
@@ -54,12 +57,10 @@ func runRelay(args []string) int {
 		BufferSize:     opts.Buffer,
 		MaxBody:        int64(opts.MaxBody),
 		ForwardTimeout: opts.ForwardTimeout,
+		MaxPaths:       opts.MaxPaths,
+		PathTTL:        opts.PathTTL,
 	}, log)
-	httpSrv := &http.Server{
-		Addr:              opts.Addr,
-		Handler:           srv.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	httpSrv := relay.HTTPServer(opts.Addr, srv.Handler(), opts.ForwardTimeout)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- httpSrv.ListenAndServe()
@@ -79,7 +80,7 @@ func runRelay(args []string) int {
 	case <-ctx.Done():
 	}
 
-	srv.CloseTunnels()
+	srv.Close()
 	shutCtx, cancel := context.WithTimeout(context.Background(), opts.ForwardTimeout)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -107,6 +108,7 @@ func runConnect(args []string) int {
 		Path:     opts.Path,
 		Token:    opts.Token,
 		Port:     opts.Port,
+		MaxBody:  int64(opts.MaxBody),
 	}
 	if err := client.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "plumb: %v\n", err)
@@ -147,6 +149,7 @@ func runReplay(args []string) int {
 			Token:    opts.Token,
 			Port:     opts.Port,
 			Last:     opts.Last,
+			MaxBody:  int64(opts.MaxBody),
 			Out:      os.Stdout,
 		})
 	}

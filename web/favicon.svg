@@ -1,6 +1,44 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4cc38a" stroke-width="2.2" stroke-linecap="round">
-  <rect x="2" y="3" width="7" height="18" rx="3.5" />
-  <rect x="15" y="3" width="7" height="18" rx="3.5" />
-  <path d="M9.5 12h5" />
-  <path d="M12.7 9.7l2.3 2.3-2.3 2.3" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <radialGradient id="pl-bg" cx="50%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#11241a" />
+      <stop offset="60%" stop-color="#08140e" />
+      <stop offset="100%" stop-color="#030805" />
+    </radialGradient>
+    <linearGradient id="pl-stroke" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="rgba(74, 222, 128, 0.55)" />
+      <stop offset="50%" stop-color="rgba(20, 184, 166, 0.25)" />
+      <stop offset="100%" stop-color="rgba(74, 222, 128, 0.10)" />
+    </linearGradient>
+    <linearGradient id="pl-flow" x1="100" y1="256" x2="412" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4ade80" />
+      <stop offset="50%" stop-color="#2dd4bf" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+    <filter id="pl-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="14" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#pl-bg)" stroke="url(#pl-stroke)" stroke-width="6" />
+  <circle cx="256" cy="256" r="130" fill="#2dd4bf" opacity="0.12" filter="url(#pl-glow)" />
+
+  <g transform="translate(0, -4)">
+    <!-- Upstream Ingress Port Chamber (Cloud Origin) -->
+    <rect x="110" y="160" width="90" height="180" rx="36" fill="#08140e" stroke="url(#pl-flow)" stroke-width="12" />
+    <circle cx="155" cy="250" r="18" fill="#4ade80" filter="url(#pl-glow)" />
+
+    <!-- Downstream Egress Port Chamber (Local Tunnel Node) -->
+    <rect x="312" y="160" width="90" height="180" rx="36" fill="#08140e" stroke="url(#pl-flow)" stroke-width="12" />
+    <circle cx="357" cy="250" r="18" fill="#38bdf8" filter="url(#pl-glow)" />
+
+    <!-- Permanent Bidirectional Relay Bridge Conduit -->
+    <line x1="200" y1="250" x2="312" y2="250" stroke="url(#pl-flow)" stroke-width="14" stroke-linecap="round" />
+
+    <!-- Forward Relay Impulse Arrow -->
+    <polygon points="275,225 310,250 275,275" fill="#38bdf8" filter="url(#pl-glow)" />
+    <!-- Reverse Ack Arrow -->
+    <polygon points="237,275 202,250 237,225" fill="#4ade80" opacity="0.8" />
+  </g>
 </svg>

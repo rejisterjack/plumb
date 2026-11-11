@@ -40,3 +40,17 @@ func TestLogExchangeReplayAndBinary(t *testing.T) {
 		t.Fatalf("body = %s", out)
 	}
 }
+
+func TestLogExchangeStripsControls(t *testing.T) {
+	var buf bytes.Buffer
+	LogExchange(&buf, false, http.MethodPost, "/hook", 200, time.Millisecond, http.Header{
+		"X-Note": []string{"ok\x1b[2J"},
+	}, []byte("hello\x1b[31mred\n"), "")
+	out := buf.String()
+	if strings.Contains(out, "\x1b") {
+		t.Fatalf("escape sequence reached the log: %q", out)
+	}
+	if !strings.Contains(out, "hello") || !strings.Contains(out, "red") {
+		t.Fatalf("body = %s", out)
+	}
+}
