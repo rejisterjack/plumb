@@ -48,7 +48,7 @@
         </p>
         <div class="hero-cta">
           <a class="button primary" href="https://github.com/rejisterjack/plumb/releases/latest">
-            Download v0.1.0
+            Download the CLI
           </a>
           <a class="button ghost" href="#install">Install with go</a>
         </div>
@@ -66,11 +66,13 @@ Stripe-Signature: t=1761820200,v1=8f…a2
 {"id": "evt_1Q…", "type": "payment_intent.succeeded"}</span>
 <span class="out">----</span>
 
-<span class="dim"># local server down? the relay buffers it</span>
-<span class="out">POST /webhooks/stripe -> 200 <span class="pill">X-Plumb-Buffered: 1</span></span>
-<span class="dim"># back up? replay without re-firing the provider</span>
+<span class="dim"># tunnel down: the provider gets 200 and X-Plumb-Buffered: 1</span>
+<span class="dim"># back up? replay posts to localhost only</span>
 <span class="prompt">$</span> plumb replay --last 5
-<span class="out">replayed 3</span></code></pre>
+<span class="out">replay POST /webhooks/stripe -> 200 (4ms)
+{"id": "evt_1Q…", "type": "payment_intent.succeeded"}
+----
+replayed 1</span></code></pre>
         </figure>
         <ul class="hero-facts">
           <li>Single Go binary — relay and CLI</li>

@@ -10,16 +10,24 @@ import (
 )
 
 func parseConnect(args []string, file fileConfig) (connectOpts, error) {
+	maxBody, err := envInt("PLUMB_MAX_BODY", 2<<20)
+	if err != nil {
+		return connectOpts{}, err
+	}
 	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	relay := fs.String("relay", "", "relay base URL")
 	path := fs.String("path", "", "tunnel path; a random slug is used when omitted")
 	port := fs.Int("port", 0, "local port to forward to")
 	token := fs.String("token", os.Getenv("PLUMB_TOKEN"), "tunnel token (or PLUMB_TOKEN)")
+	body := fs.Int("max-body", maxBody, "maximum body bytes (or PLUMB_MAX_BODY)")
 	if err := fs.Parse(args); err != nil {
 		return connectOpts{}, err
 	}
-	opts := connectOpts{Relay: *relay, Path: *path, Port: *port, Token: *token}
+	if *body < 1 {
+		return connectOpts{}, errors.New("--max-body must be positive")
+	}
+	opts := connectOpts{Relay: *relay, Path: *path, Port: *port, Token: *token, MaxBody: *body}
 	set := visited(fs)
 	if !set["relay"] {
 		opts.Relay = file.Relay
@@ -40,6 +48,10 @@ func parseConnect(args []string, file fileConfig) (connectOpts, error) {
 }
 
 func parseReplay(args []string, file fileConfig) (replayOpts, error) {
+	maxBody, err := envInt("PLUMB_MAX_BODY", 2<<20)
+	if err != nil {
+		return replayOpts{}, err
+	}
 	fs := flag.NewFlagSet("replay", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	last := fs.Int("last", 5, "number of buffered webhooks to re-POST")
@@ -47,11 +59,15 @@ func parseReplay(args []string, file fileConfig) (replayOpts, error) {
 	path := fs.String("path", "", "tunnel path")
 	port := fs.Int("port", 0, "local port to forward to")
 	token := fs.String("token", os.Getenv("PLUMB_TOKEN"), "tunnel token (or PLUMB_TOKEN)")
+	body := fs.Int("max-body", maxBody, "maximum body bytes (or PLUMB_MAX_BODY)")
 	if err := fs.Parse(args); err != nil {
 		return replayOpts{}, err
 	}
+	if *body < 1 {
+		return replayOpts{}, errors.New("--max-body must be positive")
+	}
 	opts := replayOpts{
-		connectOpts: connectOpts{Relay: *relay, Path: *path, Port: *port, Token: *token},
+		connectOpts: connectOpts{Relay: *relay, Path: *path, Port: *port, Token: *token, MaxBody: *body},
 		Last:        *last,
 	}
 	set := visited(fs)
@@ -83,6 +99,14 @@ func parseRelay(args []string) (relayOpts, error) {
 	if err != nil {
 		return relayOpts{}, err
 	}
+	maxPaths, err := envInt("PLUMB_MAX_PATHS", 1024)
+	if err != nil {
+		return relayOpts{}, err
+	}
+	pathTTL, err := envDuration("PLUMB_PATH_TTL", 24*time.Hour)
+	if err != nil {
+		return relayOpts{}, err
+	}
 
 	fs := flag.NewFlagSet("relay", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -98,8 +122,8 @@ func parseRelay(args []string) (relayOpts, error) {
 	if *token == "" && !*dev {
 		return relayOpts{}, errors.New("set PLUMB_TOKEN or --token, or pass --dev for localhost")
 	}
-	if *buffer < 1 || *body < 1 || *forward <= 0 {
-		return relayOpts{}, errors.New("buffer, max-body, and forward-timeout must be positive")
+	if *buffer < 1 || *body < 1 || *forward <= 0 || maxPaths < 1 {
+		return relayOpts{}, errors.New("buffer, max-body, forward-timeout, and max paths must be positive")
 	}
 	return relayOpts{
 		Addr:           resolveListenAddr(*addr),
@@ -108,6 +132,8 @@ func parseRelay(args []string) (relayOpts, error) {
 		Buffer:         *buffer,
 		MaxBody:        *body,
 		ForwardTimeout: *forward,
+		MaxPaths:       maxPaths,
+		PathTTL:        pathTTL,
 	}, nil
 }
 
@@ -124,6 +150,7 @@ Usage:
   plumb relay [flags]
   plumb connect [flags]
   plumb replay [flags]
+  plumb version
 
 Relay:
   --addr string              listen address (default :$PORT or :8080)
@@ -133,14 +160,19 @@ Relay:
   --max-body int             maximum body bytes (or PLUMB_MAX_BODY)
   --forward-timeout duration wait for localhost (or PLUMB_FORWARD_TIMEOUT)
 
+  PLUMB_MAX_PATHS            maximum tunnel paths (default 1024)
+  PLUMB_PATH_TTL             drop an idle path after this duration (default 24h)
+
 Connect:
   --relay string             relay base URL
   --port int                 local port to forward to
   --path string              tunnel path; random when omitted
   --token string             tunnel token (or PLUMB_TOKEN)
+  --max-body int             maximum body bytes (or PLUMB_MAX_BODY)
 
 Replay:
   --last int                 buffered webhooks to re-POST (default 5)
+  --max-body int             maximum body bytes when connect is not running
   --relay --path --port --token
                              required only when plumb connect is not running
 

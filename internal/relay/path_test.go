@@ -1,6 +1,10 @@
 package relay
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestSplitHookPath(t *testing.T) {
 	tests := []struct {
@@ -26,5 +30,32 @@ func TestSplitHookPath(t *testing.T) {
 		if ok != tt.ok || slug != tt.slug || rest != tt.rest {
 			t.Errorf("SplitHookPath(%q) = (%q, %q, %v), want (%q, %q, %v)", tt.in, slug, rest, ok, tt.slug, tt.rest, tt.ok)
 		}
+	}
+}
+
+func TestUncleanRequestPath(t *testing.T) {
+	srv := New(Config{Token: "secret"}, nil)
+	t.Cleanup(srv.Close)
+	h := srv.Handler()
+	for _, p := range []string{"/h/dev/../../secret", "/h/dev/./hook", "/h/dev//hook"} {
+		req := httptest.NewRequest(http.MethodPost, "http://relay.example/h/dev/hook", nil)
+		req.URL.Path = p
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s status %d", p, rec.Code)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://relay.example/healthz", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health %d", rec.Code)
+	}
+	req = httptest.NewRequest(http.MethodPost, "http://relay.example/h/dev/", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("trailing slash status %d", rec.Code)
 	}
 }

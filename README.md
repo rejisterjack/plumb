@@ -45,6 +45,8 @@ openssl rand -hex 32
 | `PLUMB_BUFFER` | Webhooks kept per path. Default 50. |
 | `PLUMB_MAX_BODY` | Maximum body size in bytes. Default 2 MiB. |
 | `PLUMB_FORWARD_TIMEOUT` | How long to wait for localhost. Default `15s`. |
+| `PLUMB_MAX_PATHS` | Maximum tunnel paths. Default 1024. |
+| `PLUMB_PATH_TTL` | Drop an idle path after this duration. Default `24h`. |
 | `PORT` | Injected by the host. The process listens on `:$PORT`. |
 
 ### Render
@@ -101,7 +103,9 @@ plumb connect --relay https://your-relay.example --port 3000 --path bob
 
 A second CLI that tries to claim a path that is already connected is rejected.
 
-Each request is printed in the terminal with its method, path, status, headers, and body. Display of the body stops at 64 KiB. The bytes forwarded to localhost are the original payload, up to the relay's body cap, so signature checks still match.
+Each request is printed in the terminal with its method, path, status, headers, and body. Display of the body stops at 64 KiB, and ASCII control characters in that display are stripped. The bytes forwarded to localhost are the original payload, up to the relay's body cap, so signature checks still match.
+
+`plumb version` prints the release version. A local `go build` prints `dev`.
 
 ## Replay
 
@@ -133,6 +137,8 @@ A live tunnel keeps its connection. Replay uses a separate short-lived socket. I
 - The tunnel requires `PLUMB_TOKEN`. Inbound provider requests do not, because Stripe and GitHub cannot send that token. The unguessable path is the capability.
 - The relay keeps recent raw bodies in memory. Railway logs record method, path, status, size, and duration, not payloads.
 - The CLI forwards only to `127.0.0.1` on the port you chose. It refuses relay instructions that are not a local path.
+- The terminal log strips ASCII control characters. The bytes forwarded to localhost are the original payload.
+- Inbound requests are limited to 100 per second per TCP peer, with a burst of 200. The limit uses the TCP peer, not `X-Forwarded-For`, so a client cannot mint a new bucket by spoofing that header. Behind Render or Railway the peer is the platform proxy, and the limit covers the whole relay.
 - This is for local development. Do not point production traffic at a Plumb URL.
 
 ## Stripe demo checklist
@@ -153,6 +159,8 @@ Use this once after a deploy. It is a **manual** checklist, not CI automation. K
 
 - Each team runs its own relay. Plumb does not host accounts or a multi-tenant control plane.
 - Replay history does not survive a relay restart.
+- A path with no tunnel and no webhook for 24 hours is dropped (`PLUMB_PATH_TTL`). The relay holds at most 1024 paths (`PLUMB_MAX_PATHS`). Connecting past that evicts the oldest idle path. A path that is connected, or still receiving webhooks, is kept.
+- Set `PLUMB_MAX_BODY` on the CLI as well as the relay when you raise the default 2 MiB cap. `plumb connect` and `plumb replay` read that variable, and `--max-body` overrides it.
 - There is no request rewriting, custom domain automation, or production webhook delivery.
 - Hosting cost is whatever your relay platform charges for one small always-on service.
 

@@ -23,9 +23,9 @@ func LogExchange(w io.Writer, replay bool, method, urlPath string, status int, d
 	if replay {
 		tag = "replay "
 	}
-	fmt.Fprintf(&b, "%s%s %s -> %d (%s)\n", tag, method, urlPath, status, dur.Round(time.Millisecond))
+	fmt.Fprintf(&b, "%s%s %s -> %d (%s)\n", tag, sanitizeLog(method), sanitizeLog(urlPath), status, dur.Round(time.Millisecond))
 	if note != "" {
-		fmt.Fprintf(&b, "error: %s\n", note)
+		fmt.Fprintf(&b, "error: %s\n", sanitizeLog(note))
 	}
 	if len(headers) > 0 {
 		keys := make([]string, 0, len(headers))
@@ -35,7 +35,7 @@ func LogExchange(w io.Writer, replay bool, method, urlPath string, status int, d
 		sort.Strings(keys)
 		for _, k := range keys {
 			for _, v := range headers.Values(k) {
-				fmt.Fprintf(&b, "%s: %s\n", k, v)
+				fmt.Fprintf(&b, "%s: %s\n", sanitizeLog(k), sanitizeLog(v))
 			}
 		}
 	}
@@ -53,11 +53,32 @@ func displayBody(b []byte) string {
 		return fmt.Sprintf("(binary %d bytes)\n", len(b))
 	}
 	if len(b) <= maxDisplayBody {
-		s := string(b)
-		if strings.HasSuffix(s, "\n") {
-			return s
-		}
-		return s + "\n"
+		return sanitizeLog(string(b)) + trailingNewline(b)
 	}
-	return string(b[:maxDisplayBody]) + "\n… truncated\n"
+	return sanitizeLog(string(b[:maxDisplayBody])) + "\n… truncated\n"
+}
+
+func trailingNewline(b []byte) string {
+	if len(b) > 0 && b[len(b)-1] == '\n' {
+		return ""
+	}
+	return "\n"
+}
+
+// sanitizeLog strips ASCII control characters so a webhook body cannot
+// rewrite the terminal. Newlines and tabs are kept. The bytes forwarded to
+// localhost are not passed through this function.
+func sanitizeLog(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f {
+			return '\uFFFD'
+		}
+		return r
+	}, s)
 }

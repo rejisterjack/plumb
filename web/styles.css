@@ -277,17 +277,6 @@ pre code {
   color: var(--text-faint);
 }
 
-.pill {
-  display: inline-block;
-  margin-left: 8px;
-  border: 1px solid var(--accent);
-  border-radius: 999px;
-  padding: 0 8px;
-  color: var(--accent-strong);
-  font-size: 11.5px;
-  line-height: 1.7;
-}
-
 /* ---------- sections ---------- */
 
 .section {

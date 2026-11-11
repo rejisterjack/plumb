@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -26,15 +27,18 @@ const (
 	defaultRateBurst      = 200
 	defaultIdleTimeout    = 60 * time.Second
 	defaultRegisterWait   = 10 * time.Second
+	defaultMaxPaths       = 1024
+	defaultPathTTL        = 24 * time.Hour
 )
 
 var (
-	errOffline   = errors.New("tunnel offline")
-	errBusy      = errors.New("too many in-flight forwards")
-	errTimeout   = errors.New("forward timeout")
-	errTunnel    = errors.New("tunnel closed")
-	errTooLarge  = errors.New("body too large")
-	errPathInUse = errors.New("path in use")
+	errOffline      = errors.New("tunnel offline")
+	errBusy         = errors.New("too many in-flight forwards")
+	errTimeout      = errors.New("forward timeout")
+	errTunnel       = errors.New("tunnel closed")
+	errTooLarge     = errors.New("body too large")
+	errPathInUse    = errors.New("path in use")
+	errTooManyPaths = errors.New("too many paths")
 )
 
 // Config controls a relay process. Zero values receive the defaults except
@@ -50,6 +54,8 @@ type Config struct {
 	RateBurst       float64
 	IdleTimeout     time.Duration
 	RegisterTimeout time.Duration
+	MaxPaths        int
+	PathTTL         time.Duration
 }
 
 func (c Config) withDefaults() Config {
@@ -81,6 +87,12 @@ func (c Config) withDefaults() Config {
 	if c.RegisterTimeout <= 0 {
 		c.RegisterTimeout = defaultRegisterWait
 	}
+	if c.MaxPaths <= 0 {
+		c.MaxPaths = defaultMaxPaths
+	}
+	if c.PathTTL <= 0 {
+		c.PathTTL = defaultPathTTL
+	}
 	return c
 }
 
@@ -90,8 +102,10 @@ type Server struct {
 	log     *slog.Logger
 	limiter *limiter
 
-	mu    sync.Mutex
-	paths map[string]*pathState
+	mu        sync.Mutex
+	paths     map[string]*pathState
+	stop      chan struct{}
+	closeOnce sync.Once
 }
 
 // New builds a relay handler. log may be nil.
@@ -100,11 +114,40 @@ func New(cfg Config, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	return &Server{
+	s := &Server{
 		cfg:     cfg,
 		log:     log,
 		limiter: newLimiter(cfg.RatePerSec, cfg.RateBurst),
 		paths:   make(map[string]*pathState),
+		stop:    make(chan struct{}),
+	}
+	go s.sweep()
+	return s
+}
+
+// Close stops path expiry and drops every tunnel. It is safe to call twice.
+func (s *Server) Close() {
+	s.closeOnce.Do(func() {
+		close(s.stop)
+		s.CloseTunnels()
+	})
+}
+
+// HTTPServer is the process-facing server. WriteTimeout covers a body read
+// plus one forward. Hijacked tunnel sockets clear that deadline.
+func HTTPServer(addr string, handler http.Handler, forwardTimeout time.Duration) *http.Server {
+	if forwardTimeout <= 0 {
+		forwardTimeout = defaultForwardTimeout
+	}
+	const readTimeout = 60 * time.Second
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      readTimeout + forwardTimeout + 15*time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 }
 
@@ -114,7 +157,26 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/tunnel", s.tunnel)
 	mux.HandleFunc("/", s.ingress)
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Reject this before ServeMux turns "/../" into a redirect. A trailing
+		// slash on an otherwise clean path is kept so the public prefix works.
+		if uncleanRequestPath(r.URL.Path) {
+			http.Error(w, "bad path", http.StatusBadRequest)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+func uncleanRequestPath(p string) bool {
+	if p == "" || strings.Contains(p, "\\") {
+		return true
+	}
+	cleaned := path.Clean(p)
+	if cleaned == p {
+		return false
+	}
+	return cleaned+"/" != p
 }
 
 // CloseTunnels drops every connected CLI so in-flight forwards unblock.
@@ -192,6 +254,7 @@ func (s *Server) ingress(w http.ResponseWriter, r *http.Request) {
 	ps.buf.Add(entry)
 
 	ps.mu.Lock()
+	ps.lastActive = time.Now()
 	online := ps.conn != nil
 	ps.mu.Unlock()
 	if !online {
@@ -201,7 +264,7 @@ func (s *Server) ingress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status, hdr, respBody, ferr := s.forward(ps, entry)
-	if errors.Is(ferr, errOffline) {
+	if errors.Is(ferr, errOffline) || errors.Is(ferr, errTunnel) {
 		hdr = http.Header{"X-Plumb-Buffered": []string{"1"}}
 		s.finish(w, slug, r.Method, http.StatusOK, len(body), start, hdr, nil)
 		return
@@ -215,7 +278,9 @@ func (s *Server) ingress(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) finish(w http.ResponseWriter, path, method string, status, n int, start time.Time, hdr http.Header, body []byte) {
 	s.logReq(path, method, status, n, time.Since(start))
-	if status >= 400 && len(body) == 0 {
+	// A nil body is an error this process generated. An empty slice is a real
+	// upstream response, and its status and headers must be preserved.
+	if status >= 400 && body == nil {
 		http.Error(w, http.StatusText(status), status)
 		return
 	}
@@ -286,13 +351,11 @@ func allowedMethod(m string) bool {
 }
 
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		first, _, _ := strings.Cut(xff, ",")
-		first = strings.TrimSpace(first)
-		if first != "" {
-			return first
-		}
-	}
+	// RemoteAddr is the TCP peer. X-Forwarded-For is client-controlled unless
+	// every proxy hop is trusted, so a spoofed header must not mint a fresh
+	// rate-limit bucket. Behind Render or Railway the peer is the platform
+	// proxy and the limit is effectively global, which is what a single-team
+	// relay wants.
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

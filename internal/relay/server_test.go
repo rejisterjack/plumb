@@ -1,9 +1,12 @@
 package relay
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -38,6 +41,84 @@ func TestHealthAndUnknownPath(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown path = %d", resp.StatusCode)
 	}
+}
+
+func TestHealthHead(t *testing.T) {
+	_, ts := newRelay(t, Config{Token: "secret"})
+	req, err := http.NewRequest(http.MethodHead, ts.URL+"/healthz", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("HEAD status %d", resp.StatusCode)
+	}
+	if len(body) != 0 {
+		t.Fatalf("HEAD body = %q", body)
+	}
+}
+
+func TestTraversalOverHTTP(t *testing.T) {
+	var mu sync.Mutex
+	var hits []string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits = append(hits, r.URL.RequestURI())
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	_, ts := newRelay(t, Config{Token: "secret", ForwardTimeout: 2 * time.Second})
+	client := startClient(t, ts.URL, "dev", "secret", portOf(t, backend.URL), &memLog{})
+	waitUntil(t, client.Connected)
+
+	addr := ts.Listener.Addr().String()
+	for _, target := range []string{"/h/dev/../../secret", "/h/dev/%2e%2e/secret"} {
+		code, statusLine := rawStatus(t, addr, target)
+		if code != http.StatusBadRequest {
+			t.Fatalf("%s status %d (%s)", target, code, statusLine)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(hits) != 0 {
+		t.Fatalf("localhost saw %#v", hits)
+	}
+}
+
+func rawStatus(t *testing.T, addr, target string) (int, string) {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	req := fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx", target, addr)
+	if _, err := io.WriteString(conn, req); err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) < 2 {
+		t.Fatalf("status line %q", line)
+	}
+	code, err := strconv.Atoi(fields[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return code, strings.TrimSpace(line)
 }
 
 func TestProxyRawBodyAndResponse(t *testing.T) {
@@ -562,6 +643,161 @@ func TestClientReconnectsAndReplays(t *testing.T) {
 	}
 }
 
+func TestLocalErrorStatusIsPreserved(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-App", "no")
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer backend.Close()
+	_, ts := newRelay(t, Config{Token: "secret", ForwardTimeout: 2 * time.Second})
+	client := startClient(t, ts.URL, "dev", "secret", portOf(t, backend.URL), &memLog{})
+	waitUntil(t, client.Connected)
+
+	resp, err := http.Post(ts.URL+"/h/dev/hook", "text/plain", strings.NewReader("nope"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || len(body) != 0 || resp.Header.Get("X-App") != "no" {
+		t.Fatalf("status %d body %q x-app %q", resp.StatusCode, body, resp.Header.Get("X-App"))
+	}
+}
+
+func TestTunnelDropDuringForwardIsBuffered(t *testing.T) {
+	srv, ts := newRelay(t, Config{Token: "secret", ForwardTimeout: 2 * time.Second})
+	ctx := testCtx(t)
+	conn := dialTunnel(t, ctx, ts.URL)
+	wsWrite(t, ctx, conn, protocol.Message{Type: protocol.TypeRegister, Token: "secret", Path: "dev", Mode: protocol.ModeTunnel})
+	if msg := wsRead(t, ctx, conn); msg.Type != protocol.TypeRegistered {
+		t.Fatalf("register = %+v", msg)
+	}
+	go func() {
+		_, _, _ = conn.Read(ctx)
+		srv.disconnect("dev")
+	}()
+	resp, err := http.Post(ts.URL+"/h/dev/hook", "text/plain", strings.NewReader("mid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("X-Plumb-Buffered") != "1" {
+		t.Fatalf("status %d buffered %q", resp.StatusCode, resp.Header.Get("X-Plumb-Buffered"))
+	}
+	if srv.pathState("dev").buf.Len() != 1 {
+		t.Fatal("request was not buffered")
+	}
+}
+
+func TestRateLimitIgnoresSpoofedForwardedFor(t *testing.T) {
+	_, ts := newRelay(t, Config{Token: "secret", RateBurst: 1, RatePerSec: 0, ForwardTimeout: 2 * time.Second})
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+	client := startClient(t, ts.URL, "dev", "secret", portOf(t, backend.URL), &memLog{})
+	waitUntil(t, client.Connected)
+
+	post := func(xff string) int {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/h/dev/hook", strings.NewReader("x"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("X-Forwarded-For", xff)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if post("1.1.1.1") != http.StatusNoContent {
+		t.Fatal("first request limited")
+	}
+	if post("8.8.8.8, 9.9.9.9") != http.StatusTooManyRequests {
+		t.Fatal("spoofed X-Forwarded-For reset the rate limit")
+	}
+}
+
+func TestClientIPUsesRemoteAddr(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.8:1234"
+	req.Header.Set("X-Forwarded-For", "1.2.3.4, 5.6.7.8")
+	if got := clientIP(req); got != "10.0.0.8" {
+		t.Fatalf("client IP = %q", got)
+	}
+}
+
+func TestPathCapEvictsIdleAndRejectsLive(t *testing.T) {
+	srv, ts := newRelay(t, Config{Token: "secret", MaxPaths: 1})
+	ctx := testCtx(t)
+	first := dialTunnel(t, ctx, ts.URL)
+	wsWrite(t, ctx, first, protocol.Message{Type: protocol.TypeRegister, Token: "secret", Path: "aaa", Mode: protocol.ModeTunnel})
+	if msg := wsRead(t, ctx, first); msg.Type != protocol.TypeRegistered {
+		t.Fatalf("first = %+v", msg)
+	}
+	first.CloseNow()
+	waitUntil(t, func() bool { return !tunnelUp(srv, "aaa") })
+
+	second := dialTunnel(t, ctx, ts.URL)
+	wsWrite(t, ctx, second, protocol.Message{Type: protocol.TypeRegister, Token: "secret", Path: "bbb", Mode: protocol.ModeTunnel})
+	if msg := wsRead(t, ctx, second); msg.Type != protocol.TypeRegistered {
+		t.Fatalf("second = %+v", msg)
+	}
+	if srv.pathState("aaa") != nil {
+		t.Fatal("idle path was not evicted")
+	}
+	if !tunnelUp(srv, "bbb") {
+		t.Fatal("replacement tunnel missing")
+	}
+
+	third := dialTunnel(t, ctx, ts.URL)
+	wsWrite(t, ctx, third, protocol.Message{Type: protocol.TypeRegister, Token: "secret", Path: "ccc", Mode: protocol.ModeTunnel})
+	msg := wsRead(t, ctx, third)
+	if msg.Type != protocol.TypeError || msg.Error != "too many paths" {
+		t.Fatalf("third = %+v", msg)
+	}
+	if !tunnelUp(srv, "bbb") {
+		t.Fatal("live tunnel was evicted")
+	}
+}
+
+func TestIdlePathExpires(t *testing.T) {
+	srv, ts := newRelay(t, Config{Token: "secret", PathTTL: 80 * time.Millisecond})
+	ctx := testCtx(t)
+	conn := dialTunnel(t, ctx, ts.URL)
+	wsWrite(t, ctx, conn, protocol.Message{Type: protocol.TypeRegister, Token: "secret", Path: "dev", Mode: protocol.ModeTunnel})
+	if msg := wsRead(t, ctx, conn); msg.Type != protocol.TypeRegistered {
+		t.Fatalf("register = %+v", msg)
+	}
+	conn.CloseNow()
+	waitUntil(t, func() bool { return !tunnelUp(srv, "dev") })
+	waitUntil(t, func() bool { return srv.pathState("dev") == nil })
+
+	resp, err := http.Post(ts.URL+"/h/dev/hook", "text/plain", strings.NewReader("late"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
+func TestHTTPServerTimeouts(t *testing.T) {
+	srv := HTTPServer(":8080", http.NewServeMux(), 15*time.Second)
+	if srv.ReadHeaderTimeout != 10*time.Second || srv.ReadTimeout != 60*time.Second {
+		t.Fatalf("read timeouts = %s %s", srv.ReadHeaderTimeout, srv.ReadTimeout)
+	}
+	if srv.WriteTimeout <= srv.ReadTimeout || srv.IdleTimeout != 120*time.Second {
+		t.Fatalf("write %s idle %s", srv.WriteTimeout, srv.IdleTimeout)
+	}
+	if srv.MaxHeaderBytes != 1<<20 {
+		t.Fatalf("max header bytes = %d", srv.MaxHeaderBytes)
+	}
+}
+
 func shortDir(t *testing.T) string {
 	t.Helper()
 	// Unix socket paths on macOS must fit in 103 bytes. t.TempDir includes
@@ -584,7 +820,9 @@ func newRelay(t *testing.T, cfg Config) (*Server, *httptest.Server) {
 
 func newRelayOnly(t *testing.T, cfg Config) *Server {
 	t.Helper()
-	return New(cfg, nil)
+	srv := New(cfg, nil)
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 func startClient(t *testing.T, relayURL, path, token string, port int, out io.Writer) *tunnel.Client {

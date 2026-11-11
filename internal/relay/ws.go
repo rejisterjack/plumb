@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -23,12 +24,14 @@ type pathState struct {
 	sessionCtx    context.Context
 	sessionCancel context.CancelFunc
 	pending       map[string]chan protocol.Message
+	lastActive    time.Time
 }
 
 func newPathState(cfg Config) *pathState {
 	return &pathState{
-		buf:      buffer.New(cfg.BufferSize),
-		inflight: make(chan struct{}, cfg.MaxInFlight),
+		buf:        buffer.New(cfg.BufferSize),
+		inflight:   make(chan struct{}, cfg.MaxInFlight),
+		lastActive: time.Now(),
 	}
 }
 
@@ -75,7 +78,11 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request) {
 
 	ps, err := s.claim(msg.Path, conn, ctx, cancel)
 	if err != nil {
-		_ = writeMsg(ctx, conn, nil, protocol.Message{Type: protocol.TypeError, Error: "path in use"})
+		text := "path in use"
+		if errors.Is(err, errTooManyPaths) {
+			text = "too many paths"
+		}
+		_ = writeMsg(ctx, conn, nil, protocol.Message{Type: protocol.TypeError, Error: text})
 		return
 	}
 	defer s.unclaim(msg.Path, conn)
@@ -116,7 +123,11 @@ func (s *Server) claim(path string, conn *websocket.Conn, ctx context.Context, c
 	defer s.mu.Unlock()
 	ps := s.paths[path]
 	if ps == nil {
+		if len(s.paths) >= s.cfg.MaxPaths && !s.evictOldestIdleLocked() {
+			return nil, errTooManyPaths
+		}
 		ps = newPathState(s.cfg)
+		ps.name = path
 		s.paths[path] = ps
 	}
 	ps.mu.Lock()
@@ -129,7 +140,72 @@ func (s *Server) claim(path string, conn *websocket.Conn, ctx context.Context, c
 	ps.sessionCtx = ctx
 	ps.sessionCancel = cancel
 	ps.pending = make(map[string]chan protocol.Message)
+	ps.lastActive = time.Now()
 	return ps, nil
+}
+
+// evictOldestIdleLocked removes the disconnected path that has been quiet the
+// longest. s.mu is held by the caller.
+func (s *Server) evictOldestIdleLocked() bool {
+	var oldestKey string
+	var oldestAt time.Time
+	found := false
+	for key, ps := range s.paths {
+		ps.mu.Lock()
+		idle := ps.conn == nil
+		at := ps.lastActive
+		ps.mu.Unlock()
+		if !idle {
+			continue
+		}
+		if !found || at.Before(oldestAt) {
+			found = true
+			oldestKey = key
+			oldestAt = at
+		}
+	}
+	if !found {
+		return false
+	}
+	delete(s.paths, oldestKey)
+	return true
+}
+
+func (s *Server) sweep() {
+	interval := time.Minute
+	if s.cfg.PathTTL < interval {
+		interval = s.cfg.PathTTL / 2
+		if interval < 10*time.Millisecond {
+			interval = 10 * time.Millisecond
+		}
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-ticker.C:
+			s.expirePaths()
+		}
+	}
+}
+
+func (s *Server) expirePaths() {
+	if s.cfg.PathTTL <= 0 {
+		return
+	}
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, ps := range s.paths {
+		ps.mu.Lock()
+		idle := ps.conn == nil && now.Sub(ps.lastActive) > s.cfg.PathTTL
+		ps.mu.Unlock()
+		if idle {
+			delete(s.paths, key)
+		}
+	}
 }
 
 func (s *Server) unclaim(path string, conn *websocket.Conn) {
@@ -143,6 +219,7 @@ func (s *Server) unclaim(path string, conn *websocket.Conn) {
 		return
 	}
 	ps.conn = nil
+	ps.lastActive = time.Now()
 	if ps.sessionCancel != nil {
 		ps.sessionCancel()
 		ps.sessionCancel = nil
@@ -261,6 +338,9 @@ func (s *Server) forward(ps *pathState, e buffer.Entry) (int, http.Header, []byt
 		TimeoutMs:   s.cfg.ForwardTimeout.Milliseconds(),
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			err = errTunnel
+		}
 		return http.StatusBadGateway, nil, nil, err
 	}
 
@@ -271,6 +351,9 @@ func (s *Server) forward(ps *pathState, e buffer.Entry) (int, http.Header, []byt
 		body, decErr := protocol.DecodeBody(resp.Body)
 		if decErr != nil {
 			return http.StatusBadGateway, nil, nil, decErr
+		}
+		if body == nil {
+			body = []byte{}
 		}
 		if int64(len(body)) > s.cfg.MaxBody {
 			return http.StatusBadGateway, nil, nil, errTooLarge
