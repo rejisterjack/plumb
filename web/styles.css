@@ -6,7 +6,7 @@
   --bg-inset: #0a0e14;
   --text: #e7edf5;
   --text-dim: #9aa7b8;
-  --text-faint: #667385;
+  --text-faint: #8b9aab;
   --line: #223042;
   --line-strong: #2a3a4f;
   --accent: #4cc38a;
@@ -45,6 +45,11 @@ a {
 
 a:hover {
   text-decoration: underline;
+}
+
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 
 code {
