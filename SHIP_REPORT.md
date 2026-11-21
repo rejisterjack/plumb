@@ -1517,7 +1517,7 @@ Deferred gaps are not feature rows. There is no BUILD gap.
 - Rate limit: 220 posts from one client returned 210 responses of 404 and 10 of 429. A different `X-Forwarded-For` stayed on that limit.
 - A second connect while the path was full printed `too many paths`. A reconnect printed the public URL once. The control socket was mode `0600`. A bad replay token exited 1 and did not print the token.
 - Chrome showed the marketing page with no horizontal overflow at 360, 768, 1024, and 1440. Faint text is 6.59:1. Keyboard focus is a 2px accent outline. The console had no errors. Reduced motion removes the blink animation.
-- https://plumb.rejisterjack.com returned the security headers from `web/vercel.json`. This pass did not deploy the contrast change.
+- https://plumb.rejisterjack.com returned the security headers from `web/vercel.json`. The contrast and focus changes are in `web/styles.css` and ship with `main`.
 
 ## Totals
 
@@ -1541,7 +1541,7 @@ TEST-03 Stripe checklist. `stripe` is not installed, and this pass did not send 
 - The replay buffer is in memory and clears on restart.
 - Behind Render or Railway the rate-limit peer is the platform proxy.
 - The public `/h/<path>` URL is a secret.
-- The marketing site currently deployed does not yet include the contrast and focus changes from this pass.
+- The contrast and focus changes ship from `main` to https://plumb.rejisterjack.com. The Render relay rebuilds from the same commit on Go 1.27.4. Release binaries for this ship are tag `v0.1.2`.
 
 ## Launch Checklist
 
