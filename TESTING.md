@@ -1,10 +1,10 @@
 # Testing
 
-`go test -race ./...` is the regression bar. CI runs it on every push and pull request, then builds the binary and runs `plumb version`. `go vet ./...` is part of the release gate below.
+`go test -race ./...` is the regression bar. CI runs it only on a push to `main`, then builds the binary and runs `plumb version`. `go vet ./...` is part of the release gate below.
 
 ## Release gate
 
-Tag a release only when all of these are true:
+Publish a release only from a `main` commit whose subject starts with `release: v` (`release: v1.2.3`), and only when all of these are true:
 
 - `go test -race ./...` and `go vet ./...` pass.
 - The release build prints the version passed to `-X github.com/rejisterjack/plumb/internal/cli.version`.

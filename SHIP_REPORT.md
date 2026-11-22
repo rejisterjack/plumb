@@ -1334,7 +1334,7 @@ Deferred gaps are not feature rows. There is no BUILD gap.
 - **Status:** PASSED
 - **Priority:** P0
 - **Files:** .github/workflows/ci.yml
-- **Expected behavior:** On every push and pull request, CI runs go test -race ./..., builds the binary with version ci, and runs plumb version.
+- **Expected behavior:** On a push to main, CI runs go test -race ./..., builds the binary with version ci, and runs plumb version.
 - **Acceptance:**
 - [x] The workflow file contains those three steps.
 - [x] The Go version comes from go.mod.
@@ -1402,7 +1402,7 @@ Deferred gaps are not feature rows. There is no BUILD gap.
 - **Status:** PASSED
 - **Priority:** P1
 - **Files:** .goreleaser.yaml, .github/workflows/release.yml
-- **Expected behavior:** A tag v* builds linux, darwin, and windows for amd64 and arm64, injects the tag as the version, and writes checksums. The workflow does not run on a branch push.
+- **Expected behavior:** A push to main whose subject starts with `release: v` builds linux, darwin, and windows for amd64 and arm64, injects that version, and writes checksums. The workflow does not run on any other branch.
 - **Acceptance:**
 - [x] Six targets are listed.
 - [x] The ldflags set internal/cli.version.

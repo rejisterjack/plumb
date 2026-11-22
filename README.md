@@ -175,3 +175,9 @@ go build -o plumb .
 ```
 
 `--dev` is opt-in. Use it only when the relay is bound to localhost. A public deploy must set `PLUMB_TOKEN` instead.
+
+## CI/CD
+
+Workflows run only on a push to `main`. A pull request, any other branch, a tag push, a schedule, and a manual run do not start CI or CD. The only deploy target is production. Connect Render, Railway, or Vercel to `main` and leave preview and pull-request deploys off.
+
+A production publish runs on that same push when the commit subject starts with `release: v` and a version (`release: v1.2.3`). Any other push to `main` runs checks only. Pushing a tag does not start a workflow.
